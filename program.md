@@ -112,3 +112,33 @@ The idea is that you are a completely autonomous researcher trying things out. I
 **NEVER STOP**: Once the experiment loop has begun (after the initial setup), do NOT pause to ask the human if you should continue. Do NOT ask "should I keep going?" or "is this a good stopping point?". The human might be asleep, or gone from a computer and expects you to continue working *indefinitely* until you are manually stopped. You are autonomous. If you run out of ideas, think harder — read papers referenced in the code, re-read the in-scope files for new angles, try combining previous near-misses, try more radical architectural changes. The loop runs until the human interrupts you, period.
 
 As an example use case, a user might leave you running while they sleep. If each experiment takes you ~5 minutes then you can run approx 12/hour, for a total of about 100 over the duration of the average human sleep. The user then wakes up to experimental results, all completed by you while they slept!
+
+## MPS-Specific Notes (Apple Silicon)
+
+This fork runs exclusively on macOS with MPS (Metal Performance Shaders). Key constraints that affect your research strategy:
+
+- **No torch.compile on MPS**: Each step is slower than an equivalent CUDA run. Throughput is ~50K tok/sec at the baseline config.
+- **Step budget, not token budget**: With 5 minutes and ~50K tok/sec, you get more optimizer steps with smaller batches. Batches of 16K tokens (TOTAL_BATCH_SIZE=2**14) give ~870 steps vs only 241 steps at the default 65K batch.
+- **Optimal batch range**: 8K-32K tokens per step. Smaller is noisier; larger means too few updates.
+- **Model size tradeoff**: At ~50K tok/sec, models larger than ~15M params can't get enough steps in 5 minutes. Stick to DEPTH=4 unless you specifically want to test capacity.
+- **No bfloat16 autocast**: MPS uses nullcontext, so the model trains in float32 implicitly. This is normal and expected.
+- **Memory is abundant**: This Mac Studio has 64GB unified memory. OOM is essentially impossible at these model sizes.
+
+**Proven best config** (from overnight run, 51 experiments, best val_bpb=1.342404 vs 1.380173 baseline):
+```python
+TOTAL_BATCH_SIZE = 2**14   # 16K tokens
+DEVICE_BATCH_SIZE = 8
+WINDOW_PATTERN = "SSSL"
+WEIGHT_DECAY = 0.07
+ADAM_BETAS = (0.8, 0.98)
+MATRIX_LR = 0.035
+WARMDOWN_RATIO = 0.45
+FINAL_LR_FRAC = 0.1
+```
+
+**Unexplored directions**:
+- Muon ns_steps (currently 5, try 3 or 7)
+- Softcap value (currently 15, try 20 or 30)
+- Fine-tuning WARMDOWN_RATIO around 0.45
+- GQA (n_kv_head < n_head)
+- x0_lambdas initialization value
